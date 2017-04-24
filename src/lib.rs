@@ -42,7 +42,7 @@ use std::os::unix::io::RawFd;
 use std::{ptr, slice};
 
 #[allow(missing_docs)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Error {
     OS,
     Overflow,
@@ -93,6 +93,17 @@ impl std::fmt::Debug for Buf {
     }
 }
 
+/// An iterator over a slice of a magic ringbuffer.  This consumes
+/// these bytes; one can use `readable_slice().iter()` instead to
+/// avoid this.
+#[derive(Debug)]
+pub struct BufIter<'a> {
+    buf: &'a mut Buf,
+    idx: usize,
+    end: usize,
+}
+
+
 // We need an fd associated with shared memory so we can
 // have both mappings point to the same thing.
 //
@@ -135,9 +146,11 @@ fn get_unlinked_shm_fd() -> Result<RawFd, Error> {
     Ok(fd)
 }
 
+
 fn get_page_size() -> Result<usize, std::num::TryFromIntError> {
     unsafe { usize::try_from(sysconf(_SC_PAGESIZE)) }
 }
+
 
 impl Buf {
     /// Creates a new magic ringbuffer that can hold `desired_size`
@@ -261,7 +274,30 @@ impl Buf {
                                       self.n_free())
         }
     }
+
+    /// Creates a `BufIter` to iterate over the currently readable
+    /// bytes in `self`, consuming them as we go.
+    pub fn iter(&mut self) -> BufIter {
+        let (idx, end) = (self.read_idx, self.write_idx);
+        BufIter {
+            buf: self,
+            idx: idx,
+            end: end
+        }
+    }
 }
+
+
+impl<'a> Iterator for BufIter<'a> {
+    type Item = u8;
+    fn next(&mut self) -> Option<u8> {
+        if self.idx >= self.end { return None }
+        if Ok(()) != self.buf.consume(1) { return None }
+        self.idx += 1;
+        Some(unsafe {*self.buf.pointer.offset(self.idx as isize - 1)})
+    }
+}
+
 
 impl Drop for Buf {
     fn drop(&mut self) {
@@ -275,6 +311,7 @@ impl Drop for Buf {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -362,5 +399,39 @@ mod tests {
 
         assert_eq!(&buf.readable_slice()[0..8], &twos[0..8]);
         buf.consume(8).unwrap();
+    }
+
+    #[test]
+    fn basic_iterator() {
+        let pagesize = get_page_size().unwrap();
+        let mut buf = Buf::with_capacity(pagesize).unwrap();
+        assert_eq!(buf.n_free(), pagesize);
+        let ones = vec![1_u8; pagesize];
+        let twos = vec![2_u8; pagesize];
+        buf.writable_slice()[0..128].copy_from_slice(&ones[0..128]);
+        buf.produce(128).unwrap();
+        {
+            let iter = buf.iter();
+            let v = iter.take(128).collect::<Vec<_>>();
+            assert_eq!(v, &ones[0..128]);
+        }
+
+        buf.writable_slice().copy_from_slice(&twos[0..pagesize]);
+        buf.produce(pagesize).unwrap();
+        assert_eq!(buf.len(), pagesize);
+
+        {
+            let iter = buf.iter();
+            let v = iter.take(pagesize-8).collect::<Vec<_>>();
+            assert_eq!(v, &twos[0..pagesize-8]);
+        }
+
+        {
+            let iter = buf.iter();
+            let v = iter.take(8).collect::<Vec<_>>();
+            assert_eq!(v, &twos[0..8]);
+        }
+
+        assert_eq!(None, buf.iter().next());
     }
 }
