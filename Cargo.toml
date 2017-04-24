@@ -1,0 +1,8 @@
+[package]
+name = "magic-ringbuffer"
+version = "0.1.0"
+authors = ["Julian Squires <julian@cipht.net>"]
+publish = false
+
+[dependencies]
+libc = "0.2"
