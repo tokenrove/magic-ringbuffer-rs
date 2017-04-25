@@ -82,14 +82,12 @@ pub struct Buf {
 // Unique doesn't have Debug, alas.
 impl std::fmt::Debug for Buf {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Buf {{ capacity: {:?}, \
-                   pointer: {:?}, \
-                   read_idx: {:?}, \
-                   write_idx: {:?} }}",
-               self.capacity,
-               unsafe {self.pointer.offset(0)},
-               self.read_idx,
-               self.write_idx)
+        f.debug_struct("Buf")
+            .field("capacity", &self.capacity)
+            .field("pointer", unsafe {&self.pointer.offset(0)})
+            .field("read_idx", &self.read_idx)
+            .field("write_idx", &self.write_idx)
+            .finish()
     }
 }
 
