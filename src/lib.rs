@@ -102,8 +102,8 @@ pub struct BufIter<'a> {
 }
 
 
-// We need an fd associated with shared memory so we can
-// have both mappings point to the same thing.
+// We need an fd associated with shared memory so we can have both
+// mappings point to the same thing.
 //
 // The portable thing to do here would be to call shm_open(3), but we
 // run into the problem of generating a temporary name without races,
@@ -173,6 +173,10 @@ impl Buf {
                 Ok(p)
             };
 
+            // Under Linux, there's an unportable alternative to this
+            // sequence of mmaps, remap_file_pages(2), but it's been
+            // deprecated since 3.16, so we might as well do the
+            // (slightly more) portable thing.
             let base_pointer = checked_mmap(ptr::null_mut(),
                                             2*size,
                                             PROT_NONE,
