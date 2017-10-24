@@ -84,7 +84,7 @@ impl std::fmt::Debug for Buf {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("Buf")
             .field("capacity", &self.capacity)
-            .field("pointer", unsafe {&self.pointer.as_ptr().offset(0)})
+            .field("pointer", &format!("{:p}", &self.pointer))
             .field("read_idx", &self.read_idx)
             .field("write_idx", &self.write_idx)
             .finish()
@@ -205,7 +205,7 @@ impl Buf {
 
             Ok(Buf {
                 capacity: size,
-                pointer: ptr::Unique::new(primary as *mut u8),
+                pointer: ptr::Unique::new(primary as *mut u8).ok_or(Error::OS)?,
                 read_idx: 0,
                 write_idx: 0,
             })
