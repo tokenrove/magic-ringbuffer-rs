@@ -317,42 +317,49 @@ impl Drop for Buf {
 
 #[cfg(test)]
 mod tests {
-    use super::{Buf, get_page_size};
+    use super::Buf;
     use std::io::{Cursor, Read, Write};
+
+    // Convenience panicking get_page_size.
+    fn get_page_size() -> usize { super::get_page_size().unwrap() }
 
     #[test]
     fn expect_empty_read_to_return_zero() {
-        let buf = Buf::with_capacity(4096).unwrap();
+        let buf = Buf::with_capacity(get_page_size()).unwrap();
         let slice = buf.readable_slice();
         assert_eq!(0, slice.len())
     }
 
     #[test]
+    fn expect_with_capacity_to_round_up_to_page_size() {
+        let buf = Buf::with_capacity(42).unwrap();
+        assert_eq!(get_page_size(), buf.n_free());
+    }
+
+    #[test]
     fn expect_writes_when_full_to_return_zero() {
-        let mut buf = Buf::with_capacity(42).unwrap();
+        let mut buf = Buf::with_capacity(get_page_size()).unwrap();
         let actual_size = buf.n_free();
         buf.produce(actual_size).unwrap();
         assert_eq!(0, buf.writable_slice().len())
     }
 
     #[test]
-    #[should_panic]
-    fn expect_excessive_consume_to_panic() {
-        let mut buf = Buf::with_capacity(4096).unwrap();
-        buf.consume(42).unwrap();
+    fn expect_excessive_consume_to_return_err() {
+        let mut buf = Buf::with_capacity(get_page_size()).unwrap();
+        assert!(buf.consume(42).is_err());
     }
 
     #[test]
-    #[should_panic]
-    fn expect_excessive_produce_to_panic() {
-        let mut buf = Buf::with_capacity(4096).unwrap();
+    fn expect_excessive_produce_to_return_err() {
+        let mut buf = Buf::with_capacity(get_page_size()).unwrap();
         let actual_size = buf.n_free();
-        buf.produce(actual_size+1).unwrap();
+        assert!(buf.produce(actual_size+1).is_err());
     }
 
     #[test]
     fn copy_between_buffers() {
-        let pagesize = get_page_size().unwrap();
+        let pagesize = get_page_size();
         let mut buf = Buf::with_capacity(pagesize).unwrap();
         let mut from_v = Vec::new();
         for i in 0..10*pagesize {
@@ -362,7 +369,7 @@ mod tests {
         let mut to = Cursor::new(Vec::new());
         loop {
             let n = {
-                let mut wslice = buf.writable_slice();
+                let wslice = buf.writable_slice();
                 let n = wslice.len();
                 from.read(&mut wslice[0..n-1]).unwrap()
             };
@@ -383,7 +390,7 @@ mod tests {
 
     #[test]
     fn write_across_border() {
-        let pagesize = get_page_size().unwrap();
+        let pagesize = get_page_size();
         let mut buf = Buf::with_capacity(pagesize).unwrap();
         assert_eq!(buf.n_free(), pagesize);
         let ones = vec![1_u8; pagesize];
@@ -405,20 +412,21 @@ mod tests {
 
     #[test]
     fn basic_iterator() {
-        let pagesize = get_page_size().unwrap();
+        let pagesize = get_page_size();
         let mut buf = Buf::with_capacity(pagesize).unwrap();
         assert_eq!(buf.n_free(), pagesize);
         let ones = vec![1_u8; pagesize];
         let twos = vec![2_u8; pagesize];
-        buf.writable_slice()[0..128].copy_from_slice(&ones[0..128]);
+
+        buf.writable_slice()[..128].copy_from_slice(&ones[..128]);
         buf.produce(128).unwrap();
         {
             let iter = buf.iter();
-            let v = iter.take(128).collect::<Vec<_>>();
-            assert_eq!(v, &ones[0..128]);
+            let v = iter.collect::<Vec<_>>();
+            assert_eq!(v, &ones[..128]);
         }
 
-        buf.writable_slice().copy_from_slice(&twos[0..pagesize]);
+        buf.writable_slice().copy_from_slice(&twos[..]);
         buf.produce(pagesize).unwrap();
         assert_eq!(buf.len(), pagesize);
 
@@ -430,8 +438,8 @@ mod tests {
 
         {
             let iter = buf.iter();
-            let v = iter.take(8).collect::<Vec<_>>();
-            assert_eq!(v, &twos[0..8]);
+            let v = iter.collect::<Vec<_>>();
+            assert_eq!(v, &twos[..8]);
         }
 
         assert_eq!(None, buf.iter().next());
