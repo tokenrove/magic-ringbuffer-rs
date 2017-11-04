@@ -38,6 +38,7 @@ use libc::{
 };
 use std::convert::TryFrom;
 use std::ffi::CString;
+use std::io;
 use std::os::unix::io::RawFd;
 use std::{ptr, slice};
 
@@ -314,6 +315,40 @@ impl Drop for Buf {
     }
 }
 
+impl io::Read for Buf {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        use std::error::Error;
+        let len = {
+            let readable = self.readable_slice();
+            let len = ::std::cmp::min(readable.len(), buf.len());
+            // Safety: len is guaranteed to be within bounds of both slices.
+            unsafe { buf.get_unchecked_mut(..len).copy_from_slice(readable.get_unchecked(..len)) };
+            len
+        };
+        self.consume(len)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.description()))?;
+        Ok(len)
+    }
+}
+
+impl io::Write for Buf {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        use std::error::Error;
+        let len = {
+            let writable = self.writable_slice();
+            let len = ::std::cmp::min(writable.len(), buf.len());
+            // Safety: len is guaranteed to be within bounds of both slices.
+            unsafe { writable.get_unchecked_mut(..len).copy_from_slice(buf.get_unchecked(..len)) };
+            len
+        };
+        self.produce(len)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.description()))?;
+        Ok(len)
+    }
+
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -435,5 +470,70 @@ mod tests {
         }
 
         assert_eq!(None, buf.iter().next());
+    }
+
+    #[test]
+    fn test_read_impl() {
+        let mut buf = Buf::with_capacity(4096).unwrap();
+
+        let mut b = [0; 128];
+
+        // buf is empty.
+        let n = buf.read(&mut b).unwrap();
+        assert_eq!(0, n);
+        assert_eq!([0; 128].as_ref(), b.as_ref());
+        assert_eq!(0, buf.len());
+
+
+        buf.writable_slice()[..256].copy_from_slice(&[1; 256]);
+        buf.produce(256).unwrap();
+        assert_eq!(256, buf.len());
+
+        // Reset.
+        b = [0; 128];
+        let n = buf.read(&mut b).unwrap();
+        assert_eq!(128, n);
+        assert_eq!([1; 128].as_ref(), b.as_ref());
+        assert_eq!(128, buf.len());
+
+        // Reset.
+        b = [0; 128];
+        let n = buf.read(&mut b).unwrap();
+        assert_eq!(128, n);
+        assert_eq!([1; 128].as_ref(), b.as_ref());
+        assert_eq!(0, buf.len());
+
+        // Reset.
+        b = [0; 128];
+        // buf is empty again.
+        let n = buf.read(&mut b).unwrap();
+        assert_eq!(0, n);
+        assert_eq!([0; 128].as_ref(), b.as_ref());
+        assert_eq!(0, buf.len());
+    }
+
+    #[test]
+    fn test_write_impl() {
+        let mut buf = Buf::with_capacity(4096).unwrap();
+
+        let n = buf.write(&[1; 128][..]).unwrap();
+        assert_eq!(128, n);
+        assert_eq!(128, buf.len());
+
+        assert_eq!(&[1; 128][..], buf.readable_slice());
+
+        let n = buf.write(&[1; 4096 - 128]).unwrap();
+        assert_eq!(4096 - 128, n);
+        assert_eq!(4096, buf.len());
+
+        // buf is now full.
+        let n = buf.write(&[1]).unwrap();
+        assert_eq!(0, n);
+        assert_eq!(4096, buf.len());
+
+        buf.clear();
+        let n = buf.write(&[1; 128]).unwrap();
+        assert_eq!(128, n);
+        assert_eq!(128, buf.len());
     }
 }
