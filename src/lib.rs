@@ -97,8 +97,8 @@ impl std::fmt::Debug for Buf {
 #[derive(Debug)]
 pub struct BufIter<'a> {
     buf: &'a mut Buf,
-    idx: usize,
-    end: usize,
+    n_read: usize,
+    slice_iter: ::std::slice::Iter<'a, u8>,
 }
 
 
@@ -261,12 +261,14 @@ impl Buf {
         Ok(())
     }
 
+    unsafe fn unbounded_readable_slice<'a>(&self) -> &'a [u8] {
+        slice::from_raw_parts_mut(self.pointer.as_ptr().offset(self.read_idx as isize),
+                                  self.len())
+    }
+
     /// Gets a slice of `self` which contains bytes that can be read.
     pub fn readable_slice(&self) -> &[u8] {
-        unsafe {
-            slice::from_raw_parts(self.pointer.as_ptr().offset(self.read_idx as isize),
-                                  self.len())
-        }
+        unsafe { self.unbounded_readable_slice() }
     }
 
     /// Gets a mutable slice of `self` to which one can write bytes.
@@ -280,11 +282,11 @@ impl Buf {
     /// Creates a `BufIter` to iterate over the currently readable
     /// bytes in `self`, consuming them as we go.
     pub fn iter(&mut self) -> BufIter {
-        let (idx, end) = (self.read_idx, self.write_idx);
+        let slice = unsafe { self.unbounded_readable_slice() };
         BufIter {
             buf: self,
-            idx: idx,
-            end: end
+            n_read: 0,
+            slice_iter: slice.iter(),
         }
     }
 }
@@ -293,10 +295,15 @@ impl Buf {
 impl<'a> Iterator for BufIter<'a> {
     type Item = u8;
     fn next(&mut self) -> Option<u8> {
-        if self.idx >= self.end { return None }
-        if Ok(()) != self.buf.consume(1) { return None }
-        self.idx += 1;
-        Some(unsafe {*self.buf.pointer.as_ptr().offset(self.idx as isize - 1)})
+        // Delegate to the slice iterator, counting bytes returned.
+        self.slice_iter.next().map(|&b| { self.n_read += 1; b })
+    }
+}
+
+impl<'a> Drop for BufIter<'a> {
+    // Calls consume on the buffer with the number of bytes read via this iterator.
+    fn drop(&mut self) {
+        self.buf.consume(self.n_read).expect("BUG: cannot consume length of readable slice");
     }
 }
 
